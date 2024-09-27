@@ -36,7 +36,8 @@ void server()
         perror("listen");               //发往这个套接字。其有两个队列：半连接队列和全连接队列，前者存储未完成三次握手的连接请求，
         close(listen_fd);               //后者存储已完成三次握手的连接请求，前者长度由内核设置，后者为listen函数参数BACKLOG
         exit(EXIT_FAILURE);             //三次请求由监听套接字与客户端完成。
-    }
+    }   
+    
     int epoll_fd = epoll_create(1); //epoll可以监听多个文件描述符上的特定事件是否发生 调用epoll_create创建一个epoll实例
     if(epoll_fd == -1)              //我们用epoll实例来监听 监听套接字上的读事件，就是说，如果监听套接字上由连接请求可读，
     {                               //使用epoll相关函数可以监听到
