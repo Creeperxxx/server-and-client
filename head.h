@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/epoll.h>
+#include <pthread.h>
 #define PORT 8080
 #define BACKLOG 10
 #define MAX_EVENTS 10

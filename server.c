@@ -1,6 +1,9 @@
 #include "head.h"
 
 void server();
+void* epollwaitdeal(void* arg);
+void* clientlisten(void* arg);
+void* clientdatadeal(void* arg);
 
 int main()
 {
@@ -57,74 +60,138 @@ void server()
         exit(EXIT_FAILURE);
     }
     printf("成功创建epoll实例并监听listen套接字\n");
-    struct epoll_event events[MAX_EVENTS];  //epoll事件数组，epoll_wait函数会用到
-    struct sockaddr_in client_addr; //客户端套接字地址
-    char buffer[1024];  //缓冲区，存放接收到的信息
-    socklen_t addrlen = sizeof(client_addr);    //客户端套接字地址的大小
 
-    while(1)    //循环调用epoll_wait
+    pthread_t epollwaitthread;
+    int epoll_wait_threads[2]={epoll_fd,listen_fd};
+    if(pthread_create(&epollwaitthread,NULL,epollwaitdeal,epoll_wait_threads)!=0)
     {
-        int nfds = epoll_wait(epoll_fd,events,MAX_EVENTS, -1 );
-        if(nfds == -1)              //epoll_wait函数，作用为每调用一次，会检查 epoll实例监听的事件是否发生（是否为就绪事件），例如
-        {                           //监听套接字上的连接请求在自己的缓冲区内，如果epoll实例监听该套接字的读事件，那么只要该缓冲区
-            perror("epollwait");    //由数据可读，读事件就属于就绪事件，会被epoll_wait检测到。该函数会将所有的就绪事件复制到events
-            close(listen_fd);       //数组内存放，所以events数组的类型为epoll事件，MAX_EVENTS为数组的大小。若检测时发现没有就绪事件，
-            close(epoll_fd);        //则会阻塞，就是一直等待在那里，直到有就绪事件发生。最后一个参数为定时器，表明阻塞的最大时间。-1为
-            exit(EXIT_FAILURE);     //无限期阻塞。该函数会返回就绪事件的个数（不是套接字的个数）。至于循环调用epoll_wait，是不让其
-        }                           //只有一次监听到就绪事件的机会，让其能够无限次监听到就绪事件的次数，
-        for(int i =0 ; i < nfds ; ++i)  //挨个处理events数组中存储的就绪事件
-        {
-            if(events[i].data.fd == listen_fd)  //取出一个就绪事件，判断这个事件的套接字是否为监听套接字。
-            {                                   
-                int conn_fd = accept(listen_fd,(struct sockaddr*)&client_addr,&addrlen);//该函数是取出一个监听套接字全连接队列中
-                if(conn_fd == -1)           //连接请求，并将发送连接请求的客户端的套接字地址存入client_addr，后者为地址长度                                                    
-                {                           //函数会返回一个新套接字，与该客户端相通信
-                    perror("accept");
-                    continue;
-                }
-                //接下来将这个处理这个新套接字，其实就是用epoll实例去监听它，判断客户端是否有向该套接字发送信息
-                ev.events = EPOLLIN;        //监听新套接字的读事件
-                ev.data.fd = conn_fd;       //设置为新套接字
-                if(epoll_ctl(epoll_fd,EPOLL_CTL_ADD,conn_fd,&ev) == -1)     //用设置好的ev配置epoll实例，向epoll实例添加监听对象
-                {
-                    perror("epollctl addclientfd");
-                    close(listen_fd);
-                    close(epoll_fd);
-                    exit(EXIT_FAILURE);
-                }
-                printf("成功与%s:%d连接\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-            }
-            else    //我们只让epoll实例监听两种套接字：监听套接字和与客户端连接的套接字，既然不是监听套接字，那肯定就是与客户端
-            {       //连接的套接字了
-                //客户端上有可读事件发生
-                printf("检测到可读事件\n");
-                int bytes_read = recv(events[i].data.fd,buffer,sizeof(buffer) - 1,0);//从套接字的缓冲区将数据读入buffer中
-                if(bytes_read == -1)                                                 //返回读取到的字节个数
-                {
-                    perror("read data form client");
-                    close(events[i].data.fd);
-                    continue;
-                }
-                else if(bytes_read == 0)        //如果读事件为就绪事件但读到0个字节，说明客户端套接字关闭连接
-                {
-                    //客户端关闭连接
-                    printf("客户端关闭连接\n");
-                    close(events[i].data.fd);
-                    continue;
-                }
-                buffer[bytes_read]='\0';    //在缓冲区的最后添加一个\0，方便打印字符串
-                printf("服务端接收到数据：%s",buffer);
-                if(send(events[i].data.fd,receive_buffer,strlen(receive_buffer),0)==-1) //发送一个收到信息给客户端 
-                {
-                    perror("send received data");
-                    close(events[i].data.fd);
-                    continue;
-                }
-                printf("向客户端发送确认信息\n");
-            }
-        }
+        perror("pthread_create");
+        close(epoll_fd);
+        close(listen_fd);
+        exit(EXIT_FAILURE);
     }
+
+    while(1)
+    {
+        sleep(5);
+        printf("主线程正在做自己的事\n");
+    }
+    pthread_join(epollwaitthread,NULL);
+
     close(listen_fd);
     close(epoll_fd);
 }
 
+void* epollwaitdeal(void * arg)
+{
+    printf("epollwaitdead线程创建\n");
+    int* data = (int*)arg;
+    int epoll_fd = data[0];
+    int listen_fd = data[1];
+    struct epoll_event events[MAX_EVENTS];
+    struct sockaddr_in client_addr;
+    int clientaddrlen = sizeof(client_addr);
+    while(1)
+    {
+        int nfds = epoll_wait(epoll_fd,events,MAX_EVENTS,-1);
+        for(int i = 0;i<nfds;i++)
+        {
+            if(events[i].data.fd == listen_fd)
+            {
+                pthread_t addclientepoll;
+                if(pthread_create(&addclientepoll,NULL,clientlisten,data)!=0)
+                {
+                    perror("pthread_create: clientlisten");
+                    continue;;
+                }
+            }
+            else
+            {
+                pthread_t dealclientdata;
+                if(pthread_create(&dealclientdata,NULL,clientdatadeal,&events[i].data.fd) !=0)
+                {
+                    perror("pthread_create:clientdatadeal");
+                    continue;
+                }
+            }
+        }
+    }
+    pthread_exit(NULL);
+
+}
+
+void* clientlisten(void* arg)
+{
+    printf("clientlisten线程创建成功\n");
+    int* data = (int*)arg;
+    int epoll_fd = data[0];
+    int listen_fd = data[1];
+    struct sockaddr_in client_addr;
+    socklen_t client_addr_len = sizeof(client_addr);
+    int newsocket = accept(listen_fd,(struct sockaddr*)&client_addr,&client_addr_len);
+    if(newsocket == -1)
+    {
+        perror("client newsocket");
+        close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+    struct epoll_event ev;
+    ev.events = EPOLLIN|EPOLLET;
+    ev.data.fd = newsocket;
+    if(epoll_ctl(epoll_fd,EPOLL_CTL_ADD,newsocket,&ev) == -1)
+    {
+        perror("client newsocket epoll_ctl add");
+        close(epoll_fd);
+        close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+    printf("已与%s:%d建立连接\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+    pthread_exit(NULL);
+
+}
+
+void* clientdatadeal(void* arg)
+{
+    printf("clientdatadeal线程创建成功\n");
+    int client_socket = *(int*)arg;
+    char buffer[CLIENT_BUFFER_SIZE];
+
+    struct sockaddr_in client_addr;
+    socklen_t addrlen = sizeof(client_addr);
+    if(getpeername(client_socket,(struct sockaddr*)&client_addr,&addrlen) == -1)
+    {
+        perror("clientdatadeal:nums=0:getpeername");
+        close(client_socket);
+        exit(EXIT_FAILURE);
+    }
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr.sin_addr, ip_str, INET_ADDRSTRLEN);
+    uint16_t host_port = ntohs(client_addr.sin_port);
+
+    int nums = read(client_socket,buffer,CLIENT_BUFFER_SIZE-1);
+    if(nums == -1)
+    {
+        perror("clientdatadeal read");
+        close(client_socket);
+        exit(EXIT_FAILURE);
+    }
+    else if (nums == 0)
+    {
+        /* code */
+        
+        printf("客户端%s:%d关闭连接\n",ip_str,host_port);
+    }
+    else    
+    {
+        buffer[nums] = '\0';
+        printf("收到来自客户端%s:%d的数据：%s",ip_str,host_port,buffer);
+        if(send(client_socket,receive_buffer,strlen(receive_buffer),0) == -1)
+        {
+            perror("clientdatadeal:num>0:send");
+            close(client_socket);
+            exit(EXIT_FAILURE);
+        }
+    }
+    pthread_exit(NULL);
+  
+}
